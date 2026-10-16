@@ -10160,27 +10160,37 @@ let actx;function beep(f,d){try{actx=actx||new (window.AudioContext||window.webk
 function show(t,c){const m=$('msg');m.textContent=t;m.className=c||''}
 let last={};
 function onCode(raw){
-  const tag=raw.trim().toUpperCase(),now=Date.now();
+  const tag=raw.trim().toUpperCase(),now=Date.now();lastAct=now;
   if(last[tag]&&now-last[tag]<8000)return;last[tag]=now;
   if(!cfg.pts[tag]){beep(200,400);navigator.vibrate&&navigator.vibrate([100,80,100]);show('Not a point for this site','bad');return}
   q.push({tag:tag,t:ts(new Date()),sent:false});save();render();
   beep(880,150);navigator.vibrate&&navigator.vibrate(150);show(cfg.pts[tag]+' recorded','good');flush();
 }
-let stream=null;
+let stream=null,timer=null,wl=null,lastAct=0;const IDLE=180000;
+function keepAwake(){try{navigator.wakeLock&&navigator.wakeLock.request('screen').then(l=>{wl=l}).catch(()=>{})}catch(e){}}
 async function start(){
+  if(stream)return;
   try{stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment'},audio:false});
-    const v=$('v');v.srcObject=stream;await v.play();$('start').hidden=true;
-    try{navigator.wakeLock&&navigator.wakeLock.request('screen')}catch(e){}
-    loop();
-  }catch(e){show('Camera not available. Allow camera access.','bad')}
+    const v=$('v');v.srcObject=stream;await v.play();lastAct=Date.now();
+    $('start').textContent='Stop scanning';$('start').className='sec';keepAwake();loop();
+  }catch(e){stream=null;show('Camera not available. Allow camera access.','bad')}
+}
+function stop(note){
+  if(timer){clearInterval(timer);timer=null}
+  if(stream){stream.getTracks().forEach(t=>t.stop());stream=null}
+  try{wl&&wl.release();wl=null}catch(e){}
+  $('v').srcObject=null;$('start').textContent='Start scanning';$('start').className='';
+  if(note)show(note);
 }
 function loop(){
   const v=$('v'),c=$('c'),g=c.getContext('2d',{willReadFrequently:true});
-  setInterval(()=>{if(v.videoWidth){const s=Math.min(1,520/v.videoWidth);c.width=v.videoWidth*s;c.height=v.videoHeight*s;g.drawImage(v,0,0,c.width,c.height);
+  timer=setInterval(()=>{
+    if(Date.now()-lastAct>IDLE){stop('Scanner stopped - no scan for 3 minutes. Tap Start scanning.');return}
+    if(v.videoWidth){const s=Math.min(1,520/v.videoWidth);c.width=v.videoWidth*s;c.height=v.videoHeight*s;g.drawImage(v,0,0,c.width,c.height);
     const d=g.getImageData(0,0,c.width,c.height),r=jsQR(d.data,c.width,c.height,{inversionAttempts:'dontInvert'});if(r&&r.data)onCode(r.data)}},180);
 }
-document.addEventListener('visibilitychange',()=>{if(!document.hidden&&stream)try{navigator.wakeLock&&navigator.wakeLock.request('screen')}catch(e){}});
-$('start').onclick=start;$('send').onclick=flush;
+document.addEventListener('visibilitychange',()=>{if(!document.hidden&&stream){const t=stream.getTracks()[0];if(!t||t.readyState!=='live'){stop();start()}else keepAwake()}});
+$('start').onclick=()=>{stream?stop('Scanner stopped'):start()};$('send').onclick=flush;
 window.addEventListener('online',flush);window.addEventListener('offline',render);
 setInterval(flush,30000);render();flush();
 if('serviceWorker' in navigator)navigator.serviceWorker.register('sw.js').catch(()=>{});
