@@ -10151,7 +10151,7 @@ let busy=false;
 async function flush(){
   if(busy)return;busy=true;
   try{for(const e of q){if(e.sent)continue;
-    const r=await fetch('https://api.telegram.org/bot'+cfg.token+'/sendMessage',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chat_id:cfg.chat,text:'QR|'+cfg.site+'|'+cfg.phone+'|'+e.tag+'|'+e.t})});
+    const r=await fetch('https://api.telegram.org/bot'+cfg.token+'/sendMessage',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chat_id:cfg.chat,text:'QR|'+cfg.site+'|'+cfg.phone+'|'+e.tag+'|'+e.t+'|'+String(cfg.pts[e.tag]||'').replace(/[|\r\n]/g,'/')})});
     if(r.ok){e.sent=true;save();render();await sleep(1100)}else break;}
   }catch(err){}
   busy=false;render();
