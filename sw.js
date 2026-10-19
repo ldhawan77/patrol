@@ -1,4 +1,4 @@
-const C='patrol-v2',F=['./','index.html','manifest.json','wallpaper.jpg','logo.png'];
+const C='patrol-v3',F=['./','index.html','manifest.json','wallpaper.jpg','logo.png'];
 self.addEventListener('install',e=>{e.waitUntil(caches.open(C).then(c=>c.addAll(F)).then(()=>self.skipWaiting()))});
 self.addEventListener('activate',e=>{e.waitUntil(self.clients.claim())});
 self.addEventListener('fetch',e=>{if(e.request.url.indexOf('api.telegram.org')>-1)return;
