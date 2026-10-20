@@ -10184,16 +10184,16 @@ $('app').hidden=false;$('site').textContent=cfg.site;
 function save(){q=q.filter((e,i)=>!e.sent||i>=q.length-40);store.set('q',q)}
 function render(){
   const w=q.filter(e=>!e.sent).length,st=$('status');
-  st.textContent=(navigator.onLine?'':'Offline - ')+(w?w+' waiting to send':'All sent');st.className=w?'warn':'ok';
+  st.textContent=(navigator.onLine?'':'Offline - ')+(w?w+' waiting to send':'All sent')+(w&&lastErr?' | '+lastErr+' | '+cfg.phone+' chat '+cfg.chat:'');st.className=w?'warn':'ok';
   $('log').innerHTML=q.slice(-8).reverse().map(e=>'<li><span>'+(cfg.pts[e.tag]||e.tag)+'</span><span class="'+(e.sent?'s':'q')+'">'+e.t.slice(11)+(e.sent?' sent':' waiting')+'</span></li>').join('');
 }
-let busy=false;
+let busy=false,lastErr='';
 async function flush(){
   if(busy)return;busy=true;
   try{for(const e of q){if(e.sent)continue;
     const r=await fetch('https://api.telegram.org/bot'+cfg.token+'/sendMessage',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chat_id:cfg.chat,text:'QR|'+cfg.site+'|'+cfg.phone+'|'+e.tag+'|'+e.t+'|'+String(cfg.pts[e.tag]||'').replace(/[|\r\n]/g,'/')})});
-    if(r.ok){e.sent=true;save();render();await sleep(1100)}else break;}
-  }catch(err){}
+    if(r.ok){e.sent=true;lastErr='';save();render();await sleep(1100)}else{let d='';try{d=(await r.json()).description||''}catch(x){}lastErr=r.status+' '+d;break}}
+  }catch(err){lastErr='Network: '+(err&&err.message||err)}
   busy=false;render();
 }
 let actx;function beep(f,d){try{actx=actx||new (window.AudioContext||window.webkitAudioContext)();const o=actx.createOscillator();o.frequency.value=f;o.connect(actx.destination);o.start();setTimeout(()=>o.stop(),d)}catch(e){}}
