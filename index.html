@@ -14,7 +14,16 @@ background:url(wallpaper.jpg) no-repeat left top/cover;opacity:.3;
 -webkit-mask-image:linear-gradient(to right,#000 0,rgba(0,0,0,.55) 22%,transparent 62%);
 mask-image:linear-gradient(to right,#000 0,rgba(0,0,0,.55) 22%,transparent 62%)}
 #brand{display:flex;justify-content:center;padding:16px 0 4px}
-#brand img{width:170px;max-width:55%;height:auto;display:block}
+.logo-wrap{position:relative;width:170px;max-width:55%}
+#brand img{width:100%;height:auto;display:block}
+/* one light sweep across the logo when the page opens, then nothing runs */
+.logo-wrap::after{content:"";position:absolute;inset:0;pointer-events:none;
+-webkit-mask:url(logo.png) center/contain no-repeat;mask:url(logo.png) center/contain no-repeat;
+background:linear-gradient(105deg,transparent 44%,rgba(255,255,255,.85) 50%,transparent 56%) no-repeat;
+background-size:300% 100%;background-position:100% 0;
+animation:sweep 1.6s ease-in-out .5s 1 forwards}
+@keyframes sweep{to{background-position:0 0}}
+@media (prefers-reduced-motion:reduce){.logo-wrap::after{animation:none;opacity:0}}
 header{display:flex;flex-direction:column;align-items:center;gap:4px;padding:2px 14px 14px;text-align:center}
 #site{font-weight:700;font-size:18px;letter-spacing:.2px}
 #status{font-size:13px;color:#9aa0a6;display:flex;align-items:center;gap:7px}
@@ -46,7 +55,7 @@ li>span+span{font-size:13px}
 .q{color:#ffb020}.s{color:#4cd964}
 #setup{padding:20px;text-align:center;color:#ffb020;background:rgba(0,0,0,.6);border-radius:12px}
 </style></head><body>
-<div id="brand"><img src="logo.png" alt="Checkpoint"></div>
+<div id="brand"><span class="logo-wrap"><img src="logo.png" alt="Checkpoint"></span></div>
 <header><div id="site">Patrol Scanner</div><div id="status"></div></header>
 <main>
 <div id="setup" hidden>This phone is not set up. Open the setup link you were sent.</div>
