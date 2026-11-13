@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Checkpoint Part 3: burst test</title>
+<style>
+body{font-family:system-ui,sans-serif;margin:0;padding:16px;max-width:560px;margin:auto;background:#111;color:#eee}
+h1{font-size:19px}
+label{display:block;margin-top:12px;font-size:14px;color:#bbb}
+input{width:100%;padding:10px;font-size:15px;border-radius:8px;border:1px solid #444;background:#1c1c1c;color:#eee;box-sizing:border-box}
+button{width:100%;margin-top:12px;padding:13px;font-size:16px;font-weight:600;border:0;border-radius:10px;background:#1a64e0;color:#fff}
+button.g{background:#444}
+button:disabled{opacity:.5}
+pre{background:#1c1c1c;padding:12px;border-radius:8px;white-space:pre-wrap;font-size:13px;min-height:90px}
+.note{font-size:13px;color:#999;margin-top:6px}
+</style></head><body>
+<h1>Part 3: burst test</h1>
+<label>Web app URL (ends in /exec)</label><input id="url" autocomplete="off">
+<label>Secret</label><input id="sec" type="password" autocomplete="off">
+<label>Number of scans</label><input id="n" type="number" value="20" min="1" max="50">
+
+<button id="b1">1. Parallel burst (all at once)</button>
+<div class="note">Worst case. Some may fail with a lock error. Then press Retry failed.</div>
+<button id="b2">2. Sequential (one at a time, like the real queue)</button>
+<div class="note">Waits for each reply, then pauses 1.1 s. All should return ok.</div>
+<button id="b3" class="g">Retry failed (last run)</button>
+<button id="b4" class="g">Repeat last run exactly (duplicate test)</button>
+<pre id="out">Ready.</pre>
+
+<script>
+const $=id=>document.getElementById(id);
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+const PT="2026-11-13 10:00:00"; // fixed, so repeating a run gives the same Scan IDs
+let last=null; // {mode, items:[{tag,res}]}
+
+function classify(text){
+  const t=text.trim();
+  if(t==="ok")return "ok";
+  if(t==="ok: duplicate ignored")return "dup";
+  if(t.startsWith("error"))return "error";
+  return "other";
+}
+async function sendOne(tag){
+  const body=new URLSearchParams({secret:$("sec").value.trim(),site:"Checkpoint Test Site",phone:"BurstTest",
+    tag:tag,phonetime:PT,point:"BurstPoint",type:"scan"});
+  const t0=performance.now();
+  try{
+    const r=await fetch($("url").value.trim(),{method:"POST",body:body});
+    const text=await r.text();
+    return {kind:classify(text),text:text.slice(0,80),ms:Math.round(performance.now()-t0)};
+  }catch(e){
+    return {kind:"unreadable",text:String(e&&e.message||e),ms:Math.round(performance.now()-t0)};
+  }
+}
+function report(title,t0){
+  const c={ok:0,dup:0,error:0,other:0,unreadable:0};
+  last.items.forEach(i=>{if(i.res)c[i.res.kind]++});
+  const slow=Math.max(...last.items.filter(i=>i.res).map(i=>i.res.ms));
+  const bad=last.items.filter(i=>i.res&&!["ok","dup"].includes(i.res.kind)).slice(0,3)
+    .map(i=>i.tag+": "+i.res.kind+" - "+i.res.text).join("\n");
+  $("out").textContent=title+"\nTotal time: "+((performance.now()-t0)/1000).toFixed(1)+" s   Slowest send: "+slow+" ms\n"+
+   "ok: "+c.ok+"   duplicate ignored: "+c.dup+"   error: "+c.error+"   other: "+c.other+"   could not read: "+c.unreadable+
+   (bad?"\n\nFirst problems:\n"+bad:"")+
+   "\n\nNow check the sheet: unique Scan IDs expected = "+last.items.length+" (for this mode's tags).";
+}
+function ready(){
+  if(!$("url").value.trim()||!$("sec").value.trim()){$("out").textContent="Paste the URL and the secret first.";return false}
+  return true;
+}
+function lock(v){["b1","b2","b3","b4"].forEach(i=>$(i).disabled=v)}
+function tagsFor(mode,n){
+  const pre=mode==="parallel"?"QRBURSTP":"QRBURSTS";
+  return Array.from({length:n},(_,i)=>pre+String(i+1).padStart(2,"0"));
+}
+async function run(mode,items){
+  lock(true);const t0=performance.now();$("out").textContent="Running "+mode+"...";
+  if(mode==="parallel"){
+    await Promise.all(items.map(async i=>{i.res=await sendOne(i.tag)}));
+  }else{
+    for(const i of items){i.res=await sendOne(i.tag);$("out").textContent="Running sequential... "+items.filter(x=>x.res).length+"/"+items.length;await sleep(1100)}
+  }
+  report(mode==="parallel"?"PARALLEL BURST":"SEQUENTIAL",t0);lock(false);
+}
+async function start(mode){
+  if(!ready())return;
+  const n=Math.min(50,Math.max(1,+$("n").value||20));
+  last={mode:mode,items:tagsFor(mode,n).map(tag=>({tag:tag,res:null}))};
+  await run(mode,last.items);
+}
+$("b1").onclick=()=>start("parallel");
+$("b2").onclick=()=>start("sequential");
+$("b3").onclick=async()=>{
+  if(!last||!ready())return;
+  const failed=last.items.filter(i=>!i.res||!["ok","dup"].includes(i.res.kind));
+  if(!failed.length){$("out").textContent="Nothing failed in the last run.";return}
+  lock(true);const t0=performance.now();
+  for(const i of failed){i.res=await sendOne(i.tag);await sleep(1100)}
+  report("RETRY of "+failed.length+" failed (sequential)",t0);lock(false);
+};
+$("b4").onclick=async()=>{
+  if(!last||!ready())return;
+  last.items.forEach(i=>i.res=null);
+  await run(last.mode,last.items);
+};
+</script></body></html>
