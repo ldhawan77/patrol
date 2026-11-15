@@ -10177,7 +10177,24 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
 (function(){
 const $=id=>document.getElementById(id), p=n=>String(n).padStart(2,'0'), sleep=ms=>new Promise(r=>setTimeout(r,ms));
 const store={get(k,d){try{const v=localStorage.getItem(k);return v?JSON.parse(v):d}catch(e){return d}},set(k,v){try{localStorage.setItem(k,JSON.stringify(v));return true}catch(e){return false}}};
-if(location.hash.indexOf('#cfg=')===0){try{const s=location.hash.slice(5).replace(/-/g,'+').replace(/_/g,'/');store.set('cfg',JSON.parse(decodeURIComponent(escape(atob(s)))));history.replaceState(null,'',location.pathname)}catch(e){}}
+/* Step 5B: reject reassignment before overwriting configuration if old scans are pending. */
+let configWarning='';
+if(location.hash.indexOf('#cfg=')===0){
+  try{
+    const s=location.hash.slice(5).replace(/-/g,'+').replace(/_/g,'/');
+    const incoming=JSON.parse(decodeURIComponent(escape(atob(s))));
+    const current=store.get('cfg',null),existing=store.get('q',[]);
+    const oldUsesSheet=!!(current&&current.sheet&&current.secret);
+    const pending=Array.isArray(existing)&&existing.some(e=>!e.sent||(oldUsesSheet&&e.sh!==true));
+    if(current&&pending){
+      configWarning='Configuration not changed. Pending scans must be delivered before this phone can be reassigned.';
+    }else if(!store.set('cfg',incoming)){
+      configWarning='Configuration not changed. Phone storage unavailable. Contact your supervisor.';
+    }
+  }catch(e){configWarning='Invalid setup link. Existing configuration was not changed.'}
+  // Clear setup credentials from the address bar even if the new setup was refused.
+  history.replaceState(null,'',location.pathname+location.search);
+}
 const cfg=store.get('cfg',null);let q=store.get('q',[]);
 const ts=d=>d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate())+' '+p(d.getHours())+':'+p(d.getMinutes())+':'+p(d.getSeconds());
 /* Stable per-scan ID, created before local save; survives offline retries and restarts. */
@@ -10188,8 +10205,9 @@ function newScanId(){
   const h=Array.from(a,b=>b.toString(16).padStart(2,'0')).join('');
   return h.slice(0,8)+'-'+h.slice(8,12)+'-'+h.slice(12,16)+'-'+h.slice(16,20)+'-'+h.slice(20);
 }
-if(!cfg){$('setup').hidden=false;return}
+if(!cfg){$('setup').hidden=false;if(configWarning)$('setup').textContent=configWarning;return}
 $('app').hidden=false;$('site').textContent=cfg.site;
+if(configWarning){$('msg').textContent=configWarning;$('msg').className='bad';}
 /* Two destinations per scan: Telegram (e.sent) and the sheet (e.sh). A phone with an old link has no sheet settings and stays Telegram-only. */
 const useSheet=!!(cfg.sheet&&cfg.secret);
 const HB=15*60*1000;
