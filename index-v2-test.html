@@ -10177,22 +10177,23 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
 (function(){
 const $=id=>document.getElementById(id), p=n=>String(n).padStart(2,'0'), sleep=ms=>new Promise(r=>setTimeout(r,ms));
 const store={get(k,d){try{const v=localStorage.getItem(k);return v?JSON.parse(v):d}catch(e){return d}},set(k,v){try{localStorage.setItem(k,JSON.stringify(v));return true}catch(e){return false}}};
-/* Step 5B: reject reassignment before overwriting configuration if old scans are pending. */
+/* A pending record always retains its original full routing configuration. */
+function identity(c){return {site:c.site,phone:c.phone,pts:c.pts,token:c.token,chat:c.chat,sheet:c.sheet||'',secret:c.secret||''}}
 let configWarning='';
 if(location.hash.indexOf('#cfg=')===0){
   try{
     const s=location.hash.slice(5).replace(/-/g,'+').replace(/_/g,'/');
     const incoming=JSON.parse(decodeURIComponent(escape(atob(s))));
-    const current=store.get('cfg',null),existing=store.get('q',[]);
-    const oldUsesSheet=!!(current&&current.sheet&&current.secret);
-    const pending=Array.isArray(existing)&&existing.some(e=>!e.sent||(oldUsesSheet&&e.sh!==true));
-    if(current&&pending){
-      configWarning='Configuration not changed. Pending scans must be delivered before this phone can be reassigned.';
-    }else if(!store.set('cfg',incoming)){
-      configWarning='Configuration not changed. Phone storage unavailable. Contact your supervisor.';
+    const previous=store.get('cfg',null),oldQ=store.get('q',[]);
+    if(!incoming||typeof incoming.site!=='string'||typeof incoming.phone!=='string'||!incoming.pts)throw Error('Invalid configuration');
+    // Records from older versions have no snapshot. Bind them to their old configuration
+    // before saving the replacement configuration.
+    if(previous&&Array.isArray(oldQ)&&oldQ.some(e=>!e.origin)){
+      const next=oldQ.map(e=>e.origin?e:{...e,origin:identity(previous)});
+      if(!store.set('q',next))throw Error('Unable to preserve pending records');
     }
-  }catch(e){configWarning='Invalid setup link. Existing configuration was not changed.'}
-  // Clear setup credentials from the address bar even if the new setup was refused.
+    if(!store.set('cfg',incoming))throw Error('Unable to save new configuration');
+  }catch(e){configWarning='Configuration not changed. '+(e.message||'Invalid setup link')+'.';}
   history.replaceState(null,'',location.pathname+location.search);
 }
 const cfg=store.get('cfg',null);let q=store.get('q',[]);
@@ -10206,14 +10207,15 @@ function newScanId(){
   return h.slice(0,8)+'-'+h.slice(8,12)+'-'+h.slice(12,16)+'-'+h.slice(16,20)+'-'+h.slice(20);
 }
 if(!cfg){$('setup').hidden=false;if(configWarning)$('setup').textContent=configWarning;return}
-$('app').hidden=false;$('site').textContent=cfg.site;
-if(configWarning){$('msg').textContent=configWarning;$('msg').className='bad';}
+$('app').hidden=false;$('site').textContent=cfg.site;if(configWarning){$('msg').textContent=configWarning;$('msg').className='bad';}
 /* Two destinations per scan: Telegram (e.sent) and the sheet (e.sh). A phone with an old link has no sheet settings and stays Telegram-only. */
 const useSheet=!!(cfg.sheet&&cfg.secret);
+const recordCfg=e=>e.origin||cfg;
+const recordUsesSheet=e=>!!(recordCfg(e).sheet&&recordCfg(e).secret);
 const HB=15*60*1000;
-const allDone=e=>e.sent&&(!useSheet||e.sh===true);
+const allDone=e=>e.sent&&(!recordUsesSheet(e)||e.sh===true);
 /* scans made before this version: already sent to Telegram count as sent to the sheet (not pushed); waiting ones go to both */
-if(useSheet)q.forEach(e=>{if(e.sh===undefined)e.sh=!!e.sent});
+q.forEach(e=>{if(recordUsesSheet(e)&&e.sh===undefined)e.sh=!!e.sent});
 let storageError=false;
 function save(){
   const next=q.filter((e,i)=>!allDone(e)||i>=q.length-40);
@@ -10233,7 +10235,7 @@ function render(){
     st.textContent=w?w+' scan'+(w===1?'':'s')+' waiting to send. Retrying automatically.':'All scans sent successfully.';
     st.className=w?'warn':'ok';
   }
-  $('log').innerHTML=q.slice(-8).reverse().map(e=>'<li><span>'+(cfg.pts[e.tag]||e.tag)+'</span><span class="'+(allDone(e)?'s':'q')+'">'+e.t.slice(11)+(allDone(e)?' sent':' waiting')+'</span></li>').join('');
+  $('log').innerHTML=q.slice(-8).reverse().map(e=>'<li><span>'+(recordCfg(e).pts[e.tag]||e.tag)+'</span><span class="'+(allDone(e)?'s':'q')+'">'+e.t.slice(11)+(allDone(e)?' sent':' waiting')+'</span></li>').join('');
 }
 /* Telegram loop (unchanged behaviour). Stops at its own first error only. */
 let busyT=false;
@@ -10243,7 +10245,8 @@ async function flushT(){
     // Never send another record while a prior delivery confirmation is unsaved.
     if(storageError&&!save())break;
     if(e.sent)continue;
-    const r=await fetch('https://api.telegram.org/bot'+cfg.token+'/sendMessage',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chat_id:cfg.chat,text:'QR|'+cfg.site+'|'+cfg.phone+'|'+e.tag+'|'+e.t+'|'+String(cfg.pts[e.tag]||'').replace(/[|\r\n]/g,'/')})});
+    const origin=recordCfg(e);
+    const r=await fetch('https://api.telegram.org/bot'+origin.token+'/sendMessage',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chat_id:origin.chat,text:'QR|'+origin.site+'|'+origin.phone+'|'+e.tag+'|'+e.t+'|'+String(origin.pts[e.tag]||'').replace(/[|\r\n]/g,'/')})});
     let response=null;
     try{response=await r.json()}catch(x){}
     if(r.ok&&response&&response.ok===true){
@@ -10256,10 +10259,10 @@ async function flushT(){
   busyT=false;render();
 }
 /* Sheet loop. Form-encoded POST (no preflight). Only "ok" and "ok: duplicate ignored" count as sent: the HTTP status is always 200. */
-async function postSheet(f){
-  const body=new URLSearchParams(Object.assign({secret:cfg.secret,site:cfg.site,phone:cfg.phone},f));
+async function postSheet(f,dest=cfg){
+  const body=new URLSearchParams(Object.assign({secret:dest.secret,site:dest.site,phone:dest.phone},f));
   const ctl=new AbortController(),tm=setTimeout(()=>ctl.abort(),25000);
-  try{const r=await fetch(cfg.sheet,{method:'POST',body:body,signal:ctl.signal});return (await r.text()).trim()}
+  try{const r=await fetch(dest.sheet,{method:'POST',body:body,signal:ctl.signal});return (await r.text()).trim()}
   finally{clearTimeout(tm)}
 }
 const okReply=t=>t==='ok'||t==='ok: duplicate ignored';
@@ -10271,18 +10274,19 @@ async function heartbeat(){
 }
 let busyS=false;
 async function flushS(){
-  if(!useSheet||busyS)return;busyS=true;
+  if(busyS)return;busyS=true;
   try{let failed=false;
     for(const e of q){
       // Recover any unsaved acknowledgement before contacting the next destination.
       if(storageError&&!save()){failed=true;break}
-      if(e.sh!==false)continue;
-      const t=await postSheet({type:'scan',tag:e.tag,phonetime:e.t,point:String(cfg.pts[e.tag]||'').replace(/[|\r\n]/g,'/'),scanid:e.id||''});
+      if(!recordUsesSheet(e)||e.sh!==false)continue;
+      const origin=recordCfg(e);
+      const t=await postSheet({type:'scan',tag:e.tag,phonetime:e.t,point:String(origin.pts[e.tag]||'').replace(/[|\r\n]/g,'/'),scanid:e.id||''},origin);
       if(okReply(t)){
         e.sh=true;errS='';
         if(!save()){failed=true;render();break}
         render()}else{errS='Sheet: '+t.slice(0,60);failed=true;break}}
-    if(!failed)await heartbeat();
+    if(!failed&&useSheet)await heartbeat();
   }catch(err){errS='Sheet: Network: '+(err&&err.name==='AbortError'?'timed out':(err&&err.message||err))}
   busyS=false;render();
 }
@@ -10295,7 +10299,7 @@ function onCode(raw){
   if(last[tag]&&now-last[tag]<8000)return;last[tag]=now;
   if(!cfg.pts[tag]){beep(200,400);navigator.vibrate&&navigator.vibrate([100,80,100]);show('Not a point for this site','bad');return}
   let id;try{id=newScanId()}catch(e){beep(200,400);show('Scan NOT saved. Phone cannot create a scan ID. Contact your supervisor.','bad');return}
-  q.push({id:id,tag:tag,t:ts(new Date()),sent:false,sh:useSheet?false:undefined});
+  q.push({id:id,tag:tag,t:ts(new Date()),origin:identity(cfg),sent:false,sh:useSheet?false:undefined});
   if(!save()){
     q.pop();last[tag]=0;render();
     beep(200,400);navigator.vibrate&&navigator.vibrate([100,80,100]);
