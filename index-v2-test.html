@@ -10288,6 +10288,6 @@ document.addEventListener('visibilitychange',()=>{if(!document.hidden){flush();i
 $('start').onclick=()=>{stream?stop('Scanner stopped'):start()};$('send').onclick=flush;
 window.addEventListener('online',flush);window.addEventListener('offline',render);
 setInterval(flush,30000);render();flush();
-if('serviceWorker' in navigator)navigator.serviceWorker.register('sw.js').catch(()=>{});
+if('serviceWorker' in navigator)navigator.serviceWorker.register('sw-test.js',{scope:'./index-v2-test.html'}).catch(()=>{});
 })();
 </script></body></html>
