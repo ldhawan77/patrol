@@ -10176,7 +10176,7 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
 <script>
 (function(){
 const $=id=>document.getElementById(id), p=n=>String(n).padStart(2,'0'), sleep=ms=>new Promise(r=>setTimeout(r,ms));
-const store={get(k,d){try{const v=localStorage.getItem(k);return v?JSON.parse(v):d}catch(e){return d}},set(k,v){try{localStorage.setItem(k,JSON.stringify(v))}catch(e){}}};
+const store={get(k,d){try{const v=localStorage.getItem(k);return v?JSON.parse(v):d}catch(e){return d}},set(k,v){try{localStorage.setItem(k,JSON.stringify(v));return true}catch(e){return false}}};
 if(location.hash.indexOf('#cfg=')===0){try{const s=location.hash.slice(5).replace(/-/g,'+').replace(/_/g,'/');store.set('cfg',JSON.parse(decodeURIComponent(escape(atob(s)))));history.replaceState(null,'',location.pathname)}catch(e){}}
 const cfg=store.get('cfg',null);let q=store.get('q',[]);
 const ts=d=>d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate())+' '+p(d.getHours())+':'+p(d.getMinutes())+':'+p(d.getSeconds());
@@ -10188,11 +10188,19 @@ const HB=15*60*1000;
 const allDone=e=>e.sent&&(!useSheet||e.sh===true);
 /* scans made before this version: already sent to Telegram count as sent to the sheet (not pushed); waiting ones go to both */
 if(useSheet)q.forEach(e=>{if(e.sh===undefined)e.sh=!!e.sent});
-function save(){q=q.filter((e,i)=>!allDone(e)||i>=q.length-40);store.set('q',q)}
+let storageError=false;
+function save(){
+  const next=q.filter((e,i)=>!allDone(e)||i>=q.length-40);
+  if(!store.set('q',next)){storageError=true;return false}
+  storageError=false;q=next;return true;
+}
 let errT='',errS='',lastHb=store.get('hb',0);
 function render(){
   const w=q.filter(e=>!allDone(e)).length,st=$('status'),errs=[errT,errS].filter(Boolean);
-  if(!navigator.onLine){
+  if(storageError){
+    st.textContent='Storage problem — scans may not be saved. Contact your supervisor.';
+    st.className='warn';
+  }else if(!navigator.onLine){
     st.textContent=w?'Offline — '+w+' scan'+(w===1?'':'s')+' saved on phone. Will send automatically when connected.':'Offline — all scans previously sent.';
     st.className='offline';
   }else{
@@ -10244,7 +10252,13 @@ function onCode(raw){
   const tag=raw.trim().toUpperCase(),now=Date.now();lastAct=now;
   if(last[tag]&&now-last[tag]<8000)return;last[tag]=now;
   if(!cfg.pts[tag]){beep(200,400);navigator.vibrate&&navigator.vibrate([100,80,100]);show('Not a point for this site','bad');return}
-  q.push({tag:tag,t:ts(new Date()),sent:false,sh:useSheet?false:undefined});save();render();
+  q.push({tag:tag,t:ts(new Date()),sent:false,sh:useSheet?false:undefined});
+  if(!save()){
+    q.pop();last[tag]=0;render();
+    beep(200,400);navigator.vibrate&&navigator.vibrate([100,80,100]);
+    show('Scan NOT saved. Phone storage unavailable. Contact your supervisor.','bad');return;
+  }
+  render();
   beep(880,150);navigator.vibrate&&navigator.vibrate(150);show(cfg.pts[tag]+' recorded','good');flush();
 }
 let stream=null,timer=null,wl=null,lastAct=0;const IDLE=180000;
