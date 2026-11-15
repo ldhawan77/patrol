@@ -10221,11 +10221,18 @@ function render(){
 let busyT=false;
 async function flushT(){
   if(busyT)return;busyT=true;
-  try{for(const e of q){if(e.sent)continue;
+  try{for(const e of q){
+    // Never send another record while a prior delivery confirmation is unsaved.
+    if(storageError&&!save())break;
+    if(e.sent)continue;
     const r=await fetch('https://api.telegram.org/bot'+cfg.token+'/sendMessage',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chat_id:cfg.chat,text:'QR|'+cfg.site+'|'+cfg.phone+'|'+e.tag+'|'+e.t+'|'+String(cfg.pts[e.tag]||'').replace(/[|\r\n]/g,'/')})});
     let response=null;
     try{response=await r.json()}catch(x){}
-    if(r.ok&&response&&response.ok===true){e.sent=true;errT='';save();render();await sleep(1100)}
+    if(r.ok&&response&&response.ok===true){
+      e.sent=true;errT='';
+      // Keep the acknowledgement in memory; stop this delivery loop if persistence fails.
+      if(!save()){render();break}
+      render();await sleep(1100)}
     else{errT='Telegram: '+r.status+' '+(response&&response.description||'delivery not confirmed');break}}
   }catch(err){errT='Telegram: Network: '+(err&&err.message||err)}
   busyT=false;render();
@@ -10248,9 +10255,15 @@ let busyS=false;
 async function flushS(){
   if(!useSheet||busyS)return;busyS=true;
   try{let failed=false;
-    for(const e of q){if(e.sh!==false)continue;
+    for(const e of q){
+      // Recover any unsaved acknowledgement before contacting the next destination.
+      if(storageError&&!save()){failed=true;break}
+      if(e.sh!==false)continue;
       const t=await postSheet({type:'scan',tag:e.tag,phonetime:e.t,point:String(cfg.pts[e.tag]||'').replace(/[|\r\n]/g,'/'),scanid:e.id||''});
-      if(okReply(t)){e.sh=true;errS='';save();render()}else{errS='Sheet: '+t.slice(0,60);failed=true;break}}
+      if(okReply(t)){
+        e.sh=true;errS='';
+        if(!save()){failed=true;render();break}
+        render()}else{errS='Sheet: '+t.slice(0,60);failed=true;break}}
     if(!failed)await heartbeat();
   }catch(err){errS='Sheet: Network: '+(err&&err.name==='AbortError'?'timed out':(err&&err.message||err))}
   busyS=false;render();
