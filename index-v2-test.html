@@ -10223,7 +10223,10 @@ async function flushT(){
   if(busyT)return;busyT=true;
   try{for(const e of q){if(e.sent)continue;
     const r=await fetch('https://api.telegram.org/bot'+cfg.token+'/sendMessage',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chat_id:cfg.chat,text:'QR|'+cfg.site+'|'+cfg.phone+'|'+e.tag+'|'+e.t+'|'+String(cfg.pts[e.tag]||'').replace(/[|\r\n]/g,'/')})});
-    if(r.ok){e.sent=true;errT='';save();render();await sleep(1100)}else{let d='';try{d=(await r.json()).description||''}catch(x){}errT='Telegram: '+r.status+' '+d;break}}
+    let response=null;
+    try{response=await r.json()}catch(x){}
+    if(r.ok&&response&&response.ok===true){e.sent=true;errT='';save();render();await sleep(1100)}
+    else{errT='Telegram: '+r.status+' '+(response&&response.description||'delivery not confirmed');break}}
   }catch(err){errT='Telegram: Network: '+(err&&err.message||err)}
   busyT=false;render();
 }
