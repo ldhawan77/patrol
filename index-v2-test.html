@@ -10196,7 +10196,7 @@ function render(){
     st.textContent=w?'Offline — '+w+' scan'+(w===1?'':'s')+' saved on phone. Will send automatically when connected.':'Offline — all scans previously sent.';
     st.className='offline';
   }else{
-    st.textContent=(w?w+' waiting to send':'All sent')+(w&&errs.length?' | '+errs.join(' | ')+' | '+cfg.phone+' chat '+cfg.chat:'');
+    st.textContent=w?w+' scan'+(w===1?'':'s')+' waiting to send. Retrying automatically.':'All scans sent successfully.';
     st.className=w?'warn':'ok';
   }
   $('log').innerHTML=q.slice(-8).reverse().map(e=>'<li><span>'+(cfg.pts[e.tag]||e.tag)+'</span><span class="'+(allDone(e)?'s':'q')+'">'+e.t.slice(11)+(allDone(e)?' sent':' waiting')+'</span></li>').join('');
