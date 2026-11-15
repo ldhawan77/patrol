@@ -10180,6 +10180,14 @@ const store={get(k,d){try{const v=localStorage.getItem(k);return v?JSON.parse(v)
 if(location.hash.indexOf('#cfg=')===0){try{const s=location.hash.slice(5).replace(/-/g,'+').replace(/_/g,'/');store.set('cfg',JSON.parse(decodeURIComponent(escape(atob(s)))));history.replaceState(null,'',location.pathname)}catch(e){}}
 const cfg=store.get('cfg',null);let q=store.get('q',[]);
 const ts=d=>d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate())+' '+p(d.getHours())+':'+p(d.getMinutes())+':'+p(d.getSeconds());
+/* Stable per-scan ID, created before local save; survives offline retries and restarts. */
+function newScanId(){
+  if(crypto.randomUUID)return crypto.randomUUID();
+  const a=new Uint8Array(16);crypto.getRandomValues(a);
+  a[6]=(a[6]&15)|64;a[8]=(a[8]&63)|128;
+  const h=Array.from(a,b=>b.toString(16).padStart(2,'0')).join('');
+  return h.slice(0,8)+'-'+h.slice(8,12)+'-'+h.slice(12,16)+'-'+h.slice(16,20)+'-'+h.slice(20);
+}
 if(!cfg){$('setup').hidden=false;return}
 $('app').hidden=false;$('site').textContent=cfg.site;
 /* Two destinations per scan: Telegram (e.sent) and the sheet (e.sh). A phone with an old link has no sheet settings and stays Telegram-only. */
@@ -10238,7 +10246,7 @@ async function flushS(){
   if(!useSheet||busyS)return;busyS=true;
   try{let failed=false;
     for(const e of q){if(e.sh!==false)continue;
-      const t=await postSheet({type:'scan',tag:e.tag,phonetime:e.t,point:String(cfg.pts[e.tag]||'').replace(/[|\r\n]/g,'/')});
+      const t=await postSheet({type:'scan',tag:e.tag,phonetime:e.t,point:String(cfg.pts[e.tag]||'').replace(/[|\r\n]/g,'/'),scanid:e.id||''});
       if(okReply(t)){e.sh=true;errS='';save();render()}else{errS='Sheet: '+t.slice(0,60);failed=true;break}}
     if(!failed)await heartbeat();
   }catch(err){errS='Sheet: Network: '+(err&&err.name==='AbortError'?'timed out':(err&&err.message||err))}
@@ -10252,7 +10260,8 @@ function onCode(raw){
   const tag=raw.trim().toUpperCase(),now=Date.now();lastAct=now;
   if(last[tag]&&now-last[tag]<8000)return;last[tag]=now;
   if(!cfg.pts[tag]){beep(200,400);navigator.vibrate&&navigator.vibrate([100,80,100]);show('Not a point for this site','bad');return}
-  q.push({tag:tag,t:ts(new Date()),sent:false,sh:useSheet?false:undefined});
+  let id;try{id=newScanId()}catch(e){beep(200,400);show('Scan NOT saved. Phone cannot create a scan ID. Contact your supervisor.','bad');return}
+  q.push({id:id,tag:tag,t:ts(new Date()),sent:false,sh:useSheet?false:undefined});
   if(!save()){
     q.pop();last[tag]=0;render();
     beep(200,400);navigator.vibrate&&navigator.vibrate([100,80,100]);
