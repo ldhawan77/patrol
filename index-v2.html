@@ -30,6 +30,7 @@ header{display:flex;flex-direction:column;align-items:center;gap:4px;padding:2px
 #status::before{content:"";width:8px;height:8px;border-radius:50%;background:#9aa0a6}
 #status.warn{color:#ffb020}#status.warn::before{background:#ffb020}
 #status.ok{color:#4cd964}#status.ok::before{background:#4cd964}
+#status.offline{color:#c6cbd1;max-width:520px;justify-content:center;flex-wrap:wrap;line-height:1.45}#status.offline::before{background:#aeb6c0}
 main{padding:0 14px 20px;max-width:520px;margin:0 auto}
 .label{font-size:14px;font-weight:600;color:#c9cdd2;margin:0 2px 8px}
 #cam{position:relative;background:rgba(10,12,16,.88);border:1px solid rgba(255,255,255,.12);border-radius:14px;overflow:hidden;aspect-ratio:4/3}
@@ -10175,40 +10176,119 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
 <script>
 (function(){
 const $=id=>document.getElementById(id), p=n=>String(n).padStart(2,'0'), sleep=ms=>new Promise(r=>setTimeout(r,ms));
-const store={get(k,d){try{const v=localStorage.getItem(k);return v?JSON.parse(v):d}catch(e){return d}},set(k,v){try{localStorage.setItem(k,JSON.stringify(v))}catch(e){}}};
-if(location.hash.indexOf('#cfg=')===0){try{const s=location.hash.slice(5).replace(/-/g,'+').replace(/_/g,'/');store.set('cfg',JSON.parse(decodeURIComponent(escape(atob(s)))));history.replaceState(null,'',location.pathname)}catch(e){}}
+/* Keep existing production settings and records; test storage remains separate. */
+const store={get(k,d){try{const v=localStorage.getItem(k);return v?JSON.parse(v):d}catch(e){return d}},set(k,v){try{localStorage.setItem(k,JSON.stringify(v));return true}catch(e){return false}}};
+/* A pending record always retains its original full routing configuration. */
+function identity(c){return {site:c.site,phone:c.phone,pts:c.pts,token:c.token,chat:c.chat,sheet:c.sheet||'',secret:c.secret||''}}
+function validateConfig(c){
+  const object=v=>v!==null&&typeof v==='object'&&!Array.isArray(v);
+  const text=v=>typeof v==='string'&&v.trim().length>0;
+  const fail=()=>{throw Error('Invalid or incomplete setup link')};
+  if(!object(c)||!text(c.site)||!text(c.phone))fail();
+  if(!object(c.pts)||!Object.keys(c.pts).length)fail();
+  for(const [tag,label] of Object.entries(c.pts)){
+    if(!text(tag)||tag!==tag.trim().toUpperCase()||!text(label)||
+       ['__proto__','constructor','prototype'].includes(tag.toLowerCase()))fail();
+  }
+  if(typeof c.token!=='string'||!/^\d+:[A-Za-z0-9_-]+$/.test(c.token))fail();
+  if(!((typeof c.chat==='string'&&/^(?:-?\d+|@[A-Za-z0-9_]+)$/.test(c.chat))||
+       (typeof c.chat==='number'&&Number.isSafeInteger(c.chat)&&c.chat!==0)))fail();
+  if(String(c.chat)==='0')fail();
+  if(c.sheet!==undefined&&typeof c.sheet!=='string')fail();
+  if(c.secret!==undefined&&typeof c.secret!=='string')fail();
+  const hasSheet=text(c.sheet),hasSecret=text(c.secret);
+  if(hasSheet!==hasSecret)fail();
+  if(hasSheet){
+    let url;try{url=new URL(c.sheet)}catch(e){fail()}
+    if(url.protocol!=='https:'||url.hostname!=='script.google.com'||
+       !/^\/macros\/s\/[A-Za-z0-9_-]+\/exec$/.test(url.pathname)||
+       url.username||url.password||url.port||url.hash)fail();
+  }
+}
+let configWarning='';
+if(location.hash.indexOf('#cfg=')===0){
+  try{
+    const s=location.hash.slice(5).replace(/-/g,'+').replace(/_/g,'/');
+    const incoming=JSON.parse(decodeURIComponent(escape(atob(s))));
+    const previous=store.get('cfg',null),oldQ=store.get('q',[]);
+    validateConfig(incoming);
+    // Records from older versions have no snapshot. Bind them to their old configuration
+    // before saving the replacement configuration.
+    if(previous&&Array.isArray(oldQ)&&oldQ.some(e=>!e.origin)){
+      const next=oldQ.map(e=>e.origin?e:{...e,origin:identity(previous)});
+      if(!store.set('q',next))throw Error('Unable to preserve pending records');
+    }
+    if(!store.set('cfg',incoming))throw Error('Unable to save new configuration');
+  }catch(e){configWarning='Configuration not changed. '+(e.message||'Invalid setup link')+'.';}
+  history.replaceState(null,'',location.pathname+location.search);
+}
 const cfg=store.get('cfg',null);let q=store.get('q',[]);
 const ts=d=>d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate())+' '+p(d.getHours())+':'+p(d.getMinutes())+':'+p(d.getSeconds());
-if(!cfg){$('setup').hidden=false;return}
-$('app').hidden=false;$('site').textContent=cfg.site;
+/* Stable per-scan ID, created before local save; survives offline retries and restarts. */
+function newScanId(){
+  if(crypto.randomUUID)return crypto.randomUUID();
+  const a=new Uint8Array(16);crypto.getRandomValues(a);
+  a[6]=(a[6]&15)|64;a[8]=(a[8]&63)|128;
+  const h=Array.from(a,b=>b.toString(16).padStart(2,'0')).join('');
+  return h.slice(0,8)+'-'+h.slice(8,12)+'-'+h.slice(12,16)+'-'+h.slice(16,20)+'-'+h.slice(20);
+}
+if(!cfg){$('setup').hidden=false;if(configWarning)$('setup').textContent=configWarning;return}
+$('app').hidden=false;$('site').textContent=cfg.site;if(configWarning){$('msg').textContent=configWarning;$('msg').className='bad';}
 /* Two destinations per scan: Telegram (e.sent) and the sheet (e.sh). A phone with an old link has no sheet settings and stays Telegram-only. */
 const useSheet=!!(cfg.sheet&&cfg.secret);
+const recordCfg=e=>e.origin||cfg;
+const recordUsesSheet=e=>!!(recordCfg(e).sheet&&recordCfg(e).secret);
 const HB=15*60*1000;
-const allDone=e=>e.sent&&(!useSheet||e.sh===true);
+const allDone=e=>e.sent&&(!recordUsesSheet(e)||e.sh===true);
 /* scans made before this version: already sent to Telegram count as sent to the sheet (not pushed); waiting ones go to both */
-if(useSheet)q.forEach(e=>{if(e.sh===undefined)e.sh=!!e.sent});
-function save(){q=q.filter((e,i)=>!allDone(e)||i>=q.length-40);store.set('q',q)}
+q.forEach(e=>{if(recordUsesSheet(e)&&e.sh===undefined)e.sh=!!e.sent});
+let storageError=false;
+function save(){
+  const next=q.filter((e,i)=>!allDone(e)||i>=q.length-40);
+  if(!store.set('q',next)){storageError=true;return false}
+  storageError=false;q=next;return true;
+}
 let errT='',errS='',lastHb=store.get('hb',0);
 function render(){
   const w=q.filter(e=>!allDone(e)).length,st=$('status'),errs=[errT,errS].filter(Boolean);
-  st.textContent=(navigator.onLine?'':'Offline - ')+(w?w+' waiting to send':'All sent')+(w&&errs.length?' | '+errs.join(' | ')+' | '+cfg.phone+' chat '+cfg.chat:'');st.className=w?'warn':'ok';
-  $('log').innerHTML=q.slice(-8).reverse().map(e=>'<li><span>'+(cfg.pts[e.tag]||e.tag)+'</span><span class="'+(allDone(e)?'s':'q')+'">'+e.t.slice(11)+(allDone(e)?' sent':' waiting')+'</span></li>').join('');
+  if(storageError){
+    st.textContent='Storage problem — scans may not be saved. Contact your supervisor.';
+    st.className='warn';
+  }else if(!navigator.onLine){
+    st.textContent=w?'Offline — '+w+' scan'+(w===1?'':'s')+' saved on phone. Will send automatically when connected.':'Offline — all scans previously sent.';
+    st.className='offline';
+  }else{
+    st.textContent=w?w+' scan'+(w===1?'':'s')+' waiting to send. Retrying automatically.':'All scans sent successfully.';
+    st.className=w?'warn':'ok';
+  }
+  $('log').innerHTML=q.slice(-8).reverse().map(e=>'<li><span>'+(recordCfg(e).pts[e.tag]||e.tag)+'</span><span class="'+(allDone(e)?'s':'q')+'">'+e.t.slice(11)+(allDone(e)?' sent':' waiting')+'</span></li>').join('');
 }
 /* Telegram loop (unchanged behaviour). Stops at its own first error only. */
 let busyT=false;
 async function flushT(){
   if(busyT)return;busyT=true;
-  try{for(const e of q){if(e.sent)continue;
-    const r=await fetch('https://api.telegram.org/bot'+cfg.token+'/sendMessage',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chat_id:cfg.chat,text:'QR|'+cfg.site+'|'+cfg.phone+'|'+e.tag+'|'+e.t+'|'+String(cfg.pts[e.tag]||'').replace(/[|\r\n]/g,'/')})});
-    if(r.ok){e.sent=true;errT='';save();render();await sleep(1100)}else{let d='';try{d=(await r.json()).description||''}catch(x){}errT='Telegram: '+r.status+' '+d;break}}
+  try{for(const e of q){
+    // Never send another record while a prior delivery confirmation is unsaved.
+    if(storageError&&!save())break;
+    if(e.sent)continue;
+    const origin=recordCfg(e);
+    const r=await fetch('https://api.telegram.org/bot'+origin.token+'/sendMessage',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chat_id:origin.chat,text:'QR|'+origin.site+'|'+origin.phone+'|'+e.tag+'|'+e.t+'|'+String(origin.pts[e.tag]||'').replace(/[|\r\n]/g,'/')})});
+    let response=null;
+    try{response=await r.json()}catch(x){}
+    if(r.ok&&response&&response.ok===true){
+      e.sent=true;errT='';
+      // Keep the acknowledgement in memory; stop this delivery loop if persistence fails.
+      if(!save()){render();break}
+      render();await sleep(1100)}
+    else{errT='Telegram: '+r.status+' '+(response&&response.description||'delivery not confirmed');break}}
   }catch(err){errT='Telegram: Network: '+(err&&err.message||err)}
   busyT=false;render();
 }
 /* Sheet loop. Form-encoded POST (no preflight). Only "ok" and "ok: duplicate ignored" count as sent: the HTTP status is always 200. */
-async function postSheet(f){
-  const body=new URLSearchParams(Object.assign({secret:cfg.secret,site:cfg.site,phone:cfg.phone},f));
+async function postSheet(f,dest=cfg){
+  const body=new URLSearchParams(Object.assign({secret:dest.secret,site:dest.site,phone:dest.phone},f));
   const ctl=new AbortController(),tm=setTimeout(()=>ctl.abort(),25000);
-  try{const r=await fetch(cfg.sheet,{method:'POST',body:body,signal:ctl.signal});return (await r.text()).trim()}
+  try{const r=await fetch(dest.sheet,{method:'POST',body:body,signal:ctl.signal});return (await r.text()).trim()}
   finally{clearTimeout(tm)}
 }
 const okReply=t=>t==='ok'||t==='ok: duplicate ignored';
@@ -10220,12 +10300,19 @@ async function heartbeat(){
 }
 let busyS=false;
 async function flushS(){
-  if(!useSheet||busyS)return;busyS=true;
+  if(busyS)return;busyS=true;
   try{let failed=false;
-    for(const e of q){if(e.sh!==false)continue;
-      const t=await postSheet({type:'scan',tag:e.tag,phonetime:e.t,point:String(cfg.pts[e.tag]||'').replace(/[|\r\n]/g,'/')});
-      if(okReply(t)){e.sh=true;errS='';save();render()}else{errS='Sheet: '+t.slice(0,60);failed=true;break}}
-    if(!failed)await heartbeat();
+    for(const e of q){
+      // Recover any unsaved acknowledgement before contacting the next destination.
+      if(storageError&&!save()){failed=true;break}
+      if(!recordUsesSheet(e)||e.sh!==false)continue;
+      const origin=recordCfg(e);
+      const t=await postSheet({type:'scan',tag:e.tag,phonetime:e.t,point:String(origin.pts[e.tag]||'').replace(/[|\r\n]/g,'/'),scanid:e.id||''},origin);
+      if(okReply(t)){
+        e.sh=true;errS='';
+        if(!save()){failed=true;render();break}
+        render()}else{errS='Sheet: '+t.slice(0,60);failed=true;break}}
+    if(!failed&&useSheet)await heartbeat();
   }catch(err){errS='Sheet: Network: '+(err&&err.name==='AbortError'?'timed out':(err&&err.message||err))}
   busyS=false;render();
 }
@@ -10237,7 +10324,14 @@ function onCode(raw){
   const tag=raw.trim().toUpperCase(),now=Date.now();lastAct=now;
   if(last[tag]&&now-last[tag]<8000)return;last[tag]=now;
   if(!cfg.pts[tag]){beep(200,400);navigator.vibrate&&navigator.vibrate([100,80,100]);show('Not a point for this site','bad');return}
-  q.push({tag:tag,t:ts(new Date()),sent:false,sh:useSheet?false:undefined});save();render();
+  let id;try{id=newScanId()}catch(e){beep(200,400);show('Scan NOT saved. Phone cannot create a scan ID. Contact your supervisor.','bad');return}
+  q.push({id:id,tag:tag,t:ts(new Date()),origin:identity(cfg),sent:false,sh:useSheet?false:undefined});
+  if(!save()){
+    q.pop();last[tag]=0;render();
+    beep(200,400);navigator.vibrate&&navigator.vibrate([100,80,100]);
+    show('Scan NOT saved. Phone storage unavailable. Contact your supervisor.','bad');return;
+  }
+  render();
   beep(880,150);navigator.vibrate&&navigator.vibrate(150);show(cfg.pts[tag]+' recorded','good');flush();
 }
 let stream=null,timer=null,wl=null,lastAct=0;const IDLE=180000;
