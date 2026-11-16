@@ -10179,13 +10179,38 @@ const $=id=>document.getElementById(id), p=n=>String(n).padStart(2,'0'), sleep=m
 const store={get(k,d){try{const v=localStorage.getItem(k);return v?JSON.parse(v):d}catch(e){return d}},set(k,v){try{localStorage.setItem(k,JSON.stringify(v));return true}catch(e){return false}}};
 /* A pending record always retains its original full routing configuration. */
 function identity(c){return {site:c.site,phone:c.phone,pts:c.pts,token:c.token,chat:c.chat,sheet:c.sheet||'',secret:c.secret||''}}
+function validateConfig(c){
+  const object=v=>v!==null&&typeof v==='object'&&!Array.isArray(v);
+  const text=v=>typeof v==='string'&&v.trim().length>0;
+  const fail=()=>{throw Error('Invalid or incomplete setup link')};
+  if(!object(c)||!text(c.site)||!text(c.phone))fail();
+  if(!object(c.pts)||!Object.keys(c.pts).length)fail();
+  for(const [tag,label] of Object.entries(c.pts)){
+    if(!text(tag)||tag!==tag.trim().toUpperCase()||!text(label)||
+       ['__proto__','constructor','prototype'].includes(tag.toLowerCase()))fail();
+  }
+  if(typeof c.token!=='string'||!/^\d+:[A-Za-z0-9_-]+$/.test(c.token))fail();
+  if(!((typeof c.chat==='string'&&/^(?:-?\d+|@[A-Za-z0-9_]+)$/.test(c.chat))||
+       (typeof c.chat==='number'&&Number.isSafeInteger(c.chat)&&c.chat!==0)))fail();
+  if(String(c.chat)==='0')fail();
+  if(c.sheet!==undefined&&typeof c.sheet!=='string')fail();
+  if(c.secret!==undefined&&typeof c.secret!=='string')fail();
+  const hasSheet=text(c.sheet),hasSecret=text(c.secret);
+  if(hasSheet!==hasSecret)fail();
+  if(hasSheet){
+    let url;try{url=new URL(c.sheet)}catch(e){fail()}
+    if(url.protocol!=='https:'||url.hostname!=='script.google.com'||
+       !/^\/macros\/s\/[A-Za-z0-9_-]+\/exec$/.test(url.pathname)||
+       url.username||url.password||url.port||url.hash)fail();
+  }
+}
 let configWarning='';
 if(location.hash.indexOf('#cfg=')===0){
   try{
     const s=location.hash.slice(5).replace(/-/g,'+').replace(/_/g,'/');
     const incoming=JSON.parse(decodeURIComponent(escape(atob(s))));
     const previous=store.get('cfg',null),oldQ=store.get('q',[]);
-    if(!incoming||typeof incoming.site!=='string'||typeof incoming.phone!=='string'||!incoming.pts)throw Error('Invalid configuration');
+    validateConfig(incoming);
     // Records from older versions have no snapshot. Bind them to their old configuration
     // before saving the replacement configuration.
     if(previous&&Array.isArray(oldQ)&&oldQ.some(e=>!e.origin)){
