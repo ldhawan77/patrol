@@ -10176,7 +10176,9 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
 <script>
 (function(){
 const $=id=>document.getElementById(id), p=n=>String(n).padStart(2,'0'), sleep=ms=>new Promise(r=>setTimeout(r,ms));
-const store={get(k,d){try{const v=localStorage.getItem(k);return v?JSON.parse(v):d}catch(e){return d}},set(k,v){try{localStorage.setItem(k,JSON.stringify(v));return true}catch(e){return false}}};
+/* Test-only storage. Never import or alter the live scanner's shared legacy keys. */
+const storageKey=k=>'checkpoint:test:v1:'+k;
+const store={get(k,d){try{const v=localStorage.getItem(storageKey(k));return v?JSON.parse(v):d}catch(e){return d}},set(k,v){try{localStorage.setItem(storageKey(k),JSON.stringify(v));return true}catch(e){return false}}};
 /* A pending record always retains its original full routing configuration. */
 function identity(c){return {site:c.site,phone:c.phone,pts:c.pts,token:c.token,chat:c.chat,sheet:c.sheet||'',secret:c.secret||''}}
 function validateConfig(c){
